@@ -17,8 +17,11 @@ export async function extractTablesFromPDF(
 ): Promise<ExtractedTable[]> {
   const pdfjsLib = await import("pdfjs-dist");
 
+  // 使用本地 worker 文件，不依赖外网 CDN
   pdfjsLib.GlobalWorkerOptions.workerSrc =
-    "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/5.4.449/pdf.worker.min.mjs";
+    typeof window !== "undefined"
+      ? window.location.origin + "/pdf-tool/pdf.worker.min.mjs"
+      : "/pdf-tool/pdf.worker.min.mjs";
 
   const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
   const allTables: ExtractedTable[] = [];
