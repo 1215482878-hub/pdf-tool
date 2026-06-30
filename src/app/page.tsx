@@ -361,7 +361,7 @@ export default function Home() {
                       className="w-40 h-40 mx-auto rounded-lg border border-zinc-200 object-cover"
                     />
                     <p className="text-sm text-amber-600 mt-3 font-medium">
-                      ⚠️ 付款后请截图发微信获取激活码
+                      ⚠️ 付款后请私聊您看到本软件的源头（视频作者/博主）获取激活码
                     </p>
                   </div>
 
