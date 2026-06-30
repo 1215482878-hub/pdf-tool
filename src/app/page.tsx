@@ -8,7 +8,6 @@ import {
   remainingFree,
   getLicense,
   activateLicense,
-  generateActivationCode,
 } from "@/lib/license";
 import * as XLSX from "xlsx";
 
@@ -24,7 +23,6 @@ export default function Home() {
   const [actCode, setActCode] = useState("");
   const [actMsg, setActMsg] = useState("");
   const [actStatus, setActStatus] = useState<"" | "success" | "error">("");
-  const [paidCode, setPaidCode] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // 初始化许可证状态
@@ -100,11 +98,6 @@ export default function Home() {
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
   }, [result, file, activated]);
-
-  const handlePaid = useCallback(() => {
-    const code = generateActivationCode();
-    setPaidCode(code);
-  }, []);
 
   const handleActivate = useCallback(() => {
     const result = activateLicense(actCode);
@@ -367,23 +360,9 @@ export default function Home() {
                       alt="微信收款码"
                       className="w-40 h-40 mx-auto rounded-lg border border-zinc-200 object-cover"
                     />
-                    {!paidCode ? (
-                      <button
-                        onClick={handlePaid}
-                        className="mt-3 px-6 py-2 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 transition-colors"
-                      >
-                        我已付款，获取激活码
-                      </button>
-                    ) : (
-                      <div className="mt-3 p-3 bg-green-50 dark:bg-green-950 rounded-lg">
-                        <p className="text-xs text-green-700 dark:text-green-300 mb-1">
-                          ✅ 你的永久激活码（请复制保存）：
-                        </p>
-                        <p className="text-lg font-mono font-bold text-green-800 dark:text-green-200 select-all">
-                          {paidCode}
-                        </p>
-                      </div>
-                    )}
+                    <p className="text-sm text-amber-600 mt-3 font-medium">
+                      ⚠️ 付款后请截图发微信获取激活码
+                    </p>
                   </div>
 
                   {/* Activation code input (for existing users) */}
