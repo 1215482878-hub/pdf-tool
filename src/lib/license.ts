@@ -3,9 +3,10 @@
 
 const STORAGE_KEY = "pdf-tool-license";
 const USAGE_KEY = "pdf-tool-usage";
+const USED_CODES_KEY = "pdf-tool-used-codes";
 const DAILY_LIMIT = 3;
 
-// 用于验证激活码的密钥（与 generate-code.js 保持一致）
+// 用于验证激活码的密钥
 const SECRET = "pdf-tool-2026-secret-key-v1";
 
 export interface LicenseState {
@@ -136,4 +137,45 @@ function simpleHash(str: string): string {
 function today(): string {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/**
+ * 生成一个未使用过的激活码
+ */
+export function generateActivationCode(): string {
+  const usedCodes = getUsedCodes();
+
+  let code: string;
+  let attempts = 0;
+  do {
+    // 生成随机 8 位 hex
+    const rand = Array.from({ length: 8 }, () =>
+      Math.floor(Math.random() * 16).toString(16)
+    ).join("");
+    const hash = simpleHash(rand + SECRET);
+    const suffix = hash.slice(0, 4);
+    code = `PT-${rand}${suffix}`;
+    attempts++;
+  } while (usedCodes.has(code) && attempts < 100);
+
+  // 记录已使用
+  usedCodes.add(code);
+  saveUsedCodes(usedCodes);
+
+  return code;
+}
+
+function getUsedCodes(): Set<string> {
+  if (typeof window === "undefined") return new Set();
+  try {
+    const raw = localStorage.getItem(USED_CODES_KEY);
+    if (!raw) return new Set();
+    return new Set(JSON.parse(raw) as string[]);
+  } catch {
+    return new Set();
+  }
+}
+
+function saveUsedCodes(codes: Set<string>): void {
+  localStorage.setItem(USED_CODES_KEY, JSON.stringify([...codes]));
 }
