@@ -1,7 +1,14 @@
 "use client";
 
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import { extractTablesFromPDF, type ExtractedTable } from "@/lib/pdf-utils";
+import {
+  canUse,
+  recordUsage,
+  remainingFree,
+  getLicense,
+  activateLicense,
+} from "@/lib/license";
 import * as XLSX from "xlsx";
 
 export default function Home() {
@@ -10,54 +17,100 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<ExtractedTable[] | null>(null);
   const [dragOver, setDragOver] = useState(false);
+  const [freeLeft, setFreeLeft] = useState(3);
+  const [activated, setActivated] = useState(false);
+  const [showActivate, setShowActivate] = useState(false);
+  const [actCode, setActCode] = useState("");
+  const [actMsg, setActMsg] = useState("");
+  const [actStatus, setActStatus] = useState<"" | "success" | "error">("");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleFile = useCallback(async (f: File) => {
-    if (!f.name.toLowerCase().endsWith(".pdf")) {
-      setError("仅支持 PDF 文件格式");
-      setFile(null);
-      return;
-    }
-
-    setFile(f);
-    setError(null);
-    setResult(null);
-    setLoading(true);
-
-    try {
-      const arrayBuffer = await f.arrayBuffer();
-      const tables = await extractTablesFromPDF(arrayBuffer);
-
-      if (tables.length === 0) {
-        setError(
-          "未在 PDF 中检测到表格数据。请确认 PDF 包含可提取的表格（非扫描版图片 PDF）。"
-        );
-      } else {
-        setResult(tables);
-      }
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : "未知错误";
-      setError(`PDF 处理失败：${msg}`);
-    } finally {
-      setLoading(false);
-    }
+  // 初始化许可证状态
+  useEffect(() => {
+    const lic = getLicense();
+    setActivated(lic.activated);
+    setFreeLeft(remainingFree());
   }, []);
+
+  const handleFile = useCallback(
+    async (f: File) => {
+      if (!f.name.toLowerCase().endsWith(".pdf")) {
+        setError("仅支持 PDF 文件格式");
+        setFile(null);
+        return;
+      }
+
+      // 检查使用次数
+      if (!canUse()) {
+        setError(
+          "今日免费次数已用完（3次/天）。请升级永久版解锁无限使用。"
+        );
+        setShowActivate(true);
+        setFile(null);
+        return;
+      }
+
+      setFile(f);
+      setError(null);
+      setResult(null);
+      setLoading(true);
+      recordUsage();
+      setFreeLeft(remainingFree());
+
+      try {
+        const arrayBuffer = await f.arrayBuffer();
+        const tables = await extractTablesFromPDF(arrayBuffer);
+
+        if (tables.length === 0) {
+          setError(
+            "未在 PDF 中检测到表格数据。请确认 PDF 包含可提取的表格（非扫描版图片 PDF）。"
+          );
+        } else {
+          setResult(tables);
+        }
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : "未知错误";
+        setError(`PDF 处理失败：${msg}`);
+      } finally {
+        setLoading(false);
+      }
+    },
+    []
+  );
 
   const downloadExcel = useCallback(() => {
     if (!result) return;
-    const buffer = generateExcel(result, file?.name ?? "document.pdf");
+    const buffer = generateExcel(
+      result,
+      file?.name ?? "document.pdf",
+      !activated // 未激活加水印
+    );
     const blob = new Blob([buffer], {
       type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = (file?.name ?? "document").replace(/\.pdf$/i, "") + "_提取结果.xlsx";
+    a.download =
+      (file?.name ?? "document").replace(/\.pdf$/i, "") + "_提取结果.xlsx";
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-  }, [result, file]);
+  }, [result, file, activated]);
+
+  const handleActivate = useCallback(() => {
+    const result = activateLicense(actCode);
+    if (result.success) {
+      setActMsg(result.message);
+      setActStatus("success");
+      setActivated(true);
+      setTimeout(() => setShowActivate(false), 1500);
+    } else {
+      setActMsg(result.message);
+      setActStatus("error");
+    }
+  }, [actCode]);
 
   return (
     <div className="flex flex-col flex-1">
@@ -65,9 +118,28 @@ export default function Home() {
       <header className="border-b border-zinc-200 dark:border-zinc-800">
         <div className="max-w-4xl mx-auto px-4 h-14 flex items-center justify-between">
           <span className="font-bold text-lg">PDF → Excel</span>
-          <span className="text-sm text-zinc-500">
-            纯浏览器处理 · 文件不上传 · 安全隐私
-          </span>
+          <div className="flex items-center gap-4 text-sm">
+            {activated ? (
+              <span className="text-green-600 font-medium">🔓 永久版</span>
+            ) : (
+              <>
+                <span className="text-zinc-500">
+                  今日剩余：{freeLeft === Infinity ? "无限" : `${freeLeft} 次`}
+                </span>
+                <button
+                  onClick={() => {
+                    setShowActivate(true);
+                    setActCode("");
+                    setActMsg("");
+                    setActStatus("");
+                  }}
+                  className="px-3 py-1 bg-blue-600 text-white rounded-lg text-xs hover:bg-blue-700"
+                >
+                  升级永久版
+                </button>
+              </>
+            )}
+          </div>
         </div>
       </header>
 
@@ -78,22 +150,48 @@ export default function Home() {
             PDF 表格一键导出 Excel
           </h1>
           <p className="text-lg text-zinc-500 max-w-lg mx-auto">
-            所有处理在你的浏览器内完成，文件不会上传到任何服务器。
+            纯浏览器处理，文件不上传任何服务器。
           </p>
         </div>
 
         {/* Upload */}
         <div
-          onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+          onDragOver={(e) => {
+            e.preventDefault();
+            setDragOver(true);
+          }}
           onDragLeave={() => setDragOver(false)}
-          onDrop={(e) => { e.preventDefault(); setDragOver(false); const f = e.dataTransfer.files[0]; if (f) handleFile(f); }}
-          onClick={() => fileInputRef.current?.click()}
+          onDrop={(e) => {
+            e.preventDefault();
+            setDragOver(false);
+            const f = e.dataTransfer.files[0];
+            if (f) handleFile(f);
+          }}
+          onClick={() => {
+            if (!canUse() && !activated) {
+              setShowActivate(true);
+              return;
+            }
+            fileInputRef.current?.click();
+          }}
           className={`relative border-2 border-dashed rounded-2xl p-12 text-center cursor-pointer transition-all
-            ${dragOver ? "border-blue-500 bg-blue-50 dark:bg-blue-950/30" : "border-zinc-300 dark:border-zinc-600 hover:border-zinc-400"}
+            ${
+              dragOver
+                ? "border-blue-500 bg-blue-50 dark:bg-blue-950/30"
+                : "border-zinc-300 dark:border-zinc-600 hover:border-zinc-400"
+            }
             ${loading ? "pointer-events-none opacity-60" : ""}`}
         >
-          <input ref={fileInputRef} type="file" accept=".pdf,application/pdf" className="hidden"
-            onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }} />
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".pdf,application/pdf"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) handleFile(f);
+            }}
+          />
 
           {loading ? (
             <div className="flex flex-col items-center gap-3">
@@ -104,13 +202,19 @@ export default function Home() {
             <div className="flex flex-col items-center gap-2">
               <span className="text-4xl">📄</span>
               <p className="font-medium">{file.name}</p>
-              <p className="text-sm text-zinc-400">{(file.size / 1024).toFixed(0)} KB · 点击更换文件</p>
+              <p className="text-sm text-zinc-400">
+                {(file.size / 1024).toFixed(0)} KB · 点击更换文件
+              </p>
             </div>
           ) : (
             <div className="flex flex-col items-center gap-3">
               <span className="text-5xl">📁</span>
-              <p className="font-medium text-zinc-600 dark:text-zinc-300">拖拽 PDF 到此处，或点击上传</p>
-              <p className="text-sm text-zinc-400">银行对账单 · 发票 · 财务报表 · 表格类 PDF</p>
+              <p className="font-medium text-zinc-600 dark:text-zinc-300">
+                拖拽 PDF 到此处，或点击上传
+              </p>
+              <p className="text-sm text-zinc-400">
+                银行对账单 · 发票 · 财务报表 · 表格类 PDF
+              </p>
             </div>
           )}
         </div>
@@ -128,15 +232,25 @@ export default function Home() {
             <div className="flex items-center justify-between">
               <h2 className="font-semibold text-lg">
                 提取结果 · {result.length} 个表格
+                {!activated && (
+                  <span className="text-xs text-amber-600 ml-2 font-normal">
+                    （试用版 · Excel 含水印）
+                  </span>
+                )}
               </h2>
-              <button onClick={downloadExcel}
-                className="inline-flex items-center gap-2 px-5 py-2.5 bg-green-600 text-white font-medium rounded-xl hover:bg-green-700 transition-colors">
+              <button
+                onClick={downloadExcel}
+                className="inline-flex items-center gap-2 px-5 py-2.5 bg-green-600 text-white font-medium rounded-xl hover:bg-green-700 transition-colors"
+              >
                 ⬇ 下载 Excel
               </button>
             </div>
 
             {result.map((table, idx) => (
-              <div key={idx} className="border border-zinc-200 dark:border-zinc-700 rounded-xl overflow-hidden">
+              <div
+                key={idx}
+                className="border border-zinc-200 dark:border-zinc-700 rounded-xl overflow-hidden"
+              >
                 {table.title && (
                   <div className="px-4 py-2 bg-zinc-50 dark:bg-zinc-800 text-sm font-medium text-zinc-500">
                     {table.title}
@@ -147,15 +261,28 @@ export default function Home() {
                     <thead>
                       <tr className="bg-zinc-100 dark:bg-zinc-800">
                         {table.headers.map((h, i) => (
-                          <th key={i} className="px-4 py-2 text-left font-medium whitespace-nowrap">{h || `列${i + 1}`}</th>
+                          <th
+                            key={i}
+                            className="px-4 py-2 text-left font-medium whitespace-nowrap"
+                          >
+                            {h || `列${i + 1}`}
+                          </th>
                         ))}
                       </tr>
                     </thead>
                     <tbody>
                       {table.rows.slice(0, 20).map((row, ri) => (
-                        <tr key={ri} className="border-t border-zinc-100 dark:border-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-900/50">
+                        <tr
+                          key={ri}
+                          className="border-t border-zinc-100 dark:border-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-900/50"
+                        >
                           {row.map((cell, ci) => (
-                            <td key={ci} className="px-4 py-1.5 whitespace-nowrap max-w-[200px] truncate">{cell}</td>
+                            <td
+                              key={ci}
+                              className="px-4 py-1.5 whitespace-nowrap max-w-[200px] truncate"
+                            >
+                              {cell}
+                            </td>
                           ))}
                         </tr>
                       ))}
@@ -167,34 +294,113 @@ export default function Home() {
                     仅显示前 20 行 · 共 {table.rows.length} 行
                   </div>
                 )}
-                <div className="px-4 py-1.5 text-xs text-zinc-400 bg-zinc-50 dark:bg-zinc-800 border-t border-zinc-100 dark:border-zinc-800">
-                  提取置信度：{(table.confidence * 100).toFixed(0)}%
-                </div>
               </div>
             ))}
           </div>
         )}
 
-        {/* Features */}
-        {!result && (
-          <div className="mt-12 grid grid-cols-1 sm:grid-cols-3 gap-6">
-            {[
-              { emoji: "🔒", title: "隐私安全", desc: "纯浏览器处理，文件不上传服务器" },
-              { emoji: "⚡", title: "秒级处理", desc: "本地运算，无需等待网络传输" },
-              { emoji: "📊", title: "Excel 导出", desc: "提取结果直接下载 .xlsx 格式" },
-            ].map((f) => (
-              <div key={f.title} className="text-center p-6 rounded-xl border border-zinc-100 dark:border-zinc-800">
-                <span className="text-3xl">{f.emoji}</span>
-                <h3 className="font-medium mt-2">{f.title}</h3>
-                <p className="text-sm text-zinc-400 mt-1">{f.desc}</p>
+        {/* Pricing card */}
+        {!activated && !result && (
+          <div className="mt-12 max-w-sm mx-auto">
+            <div className="border-2 border-blue-500 rounded-2xl p-6 text-center">
+              <div className="text-sm text-blue-600 font-medium mb-1">
+                永久版
               </div>
-            ))}
+              <div className="text-3xl font-bold mb-1">
+                ¥19.9
+              </div>
+              <div className="text-sm text-zinc-400 mb-4">
+                一次付费 · 永久使用 · 无限次
+              </div>
+              <ul className="text-sm text-zinc-600 space-y-2 mb-4 text-left">
+                <li>✅ 每日无限次处理</li>
+                <li>✅ Excel 无水印</li>
+                <li>✅ 优先支持</li>
+                <li>✅ 未来新功能免费更新</li>
+              </ul>
+              <button
+                onClick={() => setShowActivate(true)}
+                className="w-full py-2.5 bg-blue-600 text-white font-medium rounded-xl hover:bg-blue-700 transition-colors"
+              >
+                立即升级
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Activation modal */}
+        {showActivate && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white dark:bg-zinc-900 rounded-2xl p-6 max-w-md w-full shadow-xl">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="font-bold text-lg">
+                  {activated ? "已激活" : "升级永久版"}
+                </h3>
+                <button
+                  onClick={() => setShowActivate(false)}
+                  className="text-zinc-400 hover:text-zinc-600 text-xl"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {activated ? (
+                <div className="text-center py-4 text-green-600">
+                  ✅ 已激活永久版，感谢支持！
+                </div>
+              ) : (
+                <>
+                  {/* Payment info */}
+                  <div className="bg-zinc-50 dark:bg-zinc-800 rounded-xl p-4 mb-4 text-center">
+                    <p className="text-sm text-zinc-600 dark:text-zinc-300 mb-2">
+                      微信扫码支付 <strong>¥19.9</strong>
+                    </p>
+                    <div className="bg-white w-40 h-40 mx-auto rounded-lg flex items-center justify-center border border-zinc-200 text-sm text-zinc-400">
+                      [ 微信收款码 ]
+                    </div>
+                    <p className="text-xs text-zinc-400 mt-2">
+                      付款后联系客服获取激活码
+                    </p>
+                  </div>
+
+                  {/* Activation code input */}
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={actCode}
+                      onChange={(e) => setActCode(e.target.value.toUpperCase())}
+                      placeholder="输入激活码 PT-XXXXXXXXXXXX"
+                      className="flex-1 px-3 py-2 border border-zinc-300 dark:border-zinc-600 rounded-lg text-sm bg-transparent"
+                      maxLength={16}
+                    />
+                    <button
+                      onClick={handleActivate}
+                      disabled={actCode.length < 13}
+                      className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-40 transition-colors"
+                    >
+                      激活
+                    </button>
+                  </div>
+                  {actMsg && (
+                    <p
+                      className={`text-sm mt-2 ${
+                        actStatus === "success"
+                          ? "text-green-600"
+                          : "text-red-500"
+                      }`}
+                    >
+                      {actMsg}
+                    </p>
+                  )}
+                </>
+              )}
+            </div>
           </div>
         )}
       </main>
 
       <footer className="border-t border-zinc-100 dark:border-zinc-800 py-6 text-center text-sm text-zinc-400">
-        PDF 转 Excel · 纯浏览器处理 · 文件不上传 · 安全免费
+        PDF 转 Excel · 纯浏览器处理 · 文件不上传 · 每日免费 3 次
       </footer>
     </div>
   );
@@ -202,29 +408,34 @@ export default function Home() {
 
 function generateExcel(
   tables: ExtractedTable[],
-  originalFilename: string
+  originalFilename: string,
+  addWatermark: boolean
 ): ArrayBuffer {
   const workbook = XLSX.utils.book_new();
 
-  if (tables.length === 1) {
-    const sheetData = [tables[0].headers, ...tables[0].rows];
-    const sheet = XLSX.utils.aoa_to_sheet(sheetData);
-    XLSX.utils.book_append_sheet(workbook, sheet, "Sheet1");
-  } else {
-    for (let i = 0; i < tables.length; i++) {
-      const t = tables[i];
-      const sheetData = [t.headers, ...t.rows];
-      const sheet = XLSX.utils.aoa_to_sheet(sheetData);
-      const name = (t.title?.slice(0, 31) || `Table${i + 1}`).replace(
-        /[\\\/\*\?\[\]:]/g,
-        "-"
-      );
-      XLSX.utils.book_append_sheet(workbook, sheet, name.slice(0, 31));
+  for (let i = 0; i < tables.length; i++) {
+    const t = tables[i];
+    let sheetData: string[][];
+
+    if (addWatermark) {
+      // 第一行加水印提示
+      const watermarkRow = Array(t.headers.length).fill("");
+      watermarkRow[0] = "【试用版 · 升级永久版去除水印】";
+      sheetData = [watermarkRow, t.headers, ...t.rows];
+    } else {
+      sheetData = [t.headers, ...t.rows];
     }
+
+    const sheet = XLSX.utils.aoa_to_sheet(sheetData);
+    const name = (t.title?.slice(0, 31) || `表格${i + 1}`).replace(
+      /[\\\/\*\?\[\]:]/g,
+      "-"
+    );
+    XLSX.utils.book_append_sheet(workbook, sheet, name.slice(0, 31));
   }
 
   workbook.Props = {
-    Title: `PDF Table Export - ${originalFilename}`,
+    Title: `PDF表格提取 - ${originalFilename}`,
     CreatedDate: new Date(),
   };
 
