@@ -355,11 +355,13 @@ export default function Home() {
                     <p className="text-sm text-zinc-600 dark:text-zinc-300 mb-2">
                       微信扫码支付 <strong>¥19.9</strong>
                     </p>
-                    <div className="bg-white w-40 h-40 mx-auto rounded-lg flex items-center justify-center border border-zinc-200 text-sm text-zinc-400">
-                      [ 微信收款码 ]
-                    </div>
+                    <img
+                      src="/pdf-tool/qrcode.jpg"
+                      alt="微信收款码"
+                      className="w-40 h-40 mx-auto rounded-lg border border-zinc-200 object-cover"
+                    />
                     <p className="text-xs text-zinc-400 mt-2">
-                      付款后联系客服获取激活码
+                      付款 ¥19.9 后截图联系客服获取激活码
                     </p>
                   </div>
 
