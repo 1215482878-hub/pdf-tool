@@ -228,5 +228,6 @@ function generateExcel(
     CreatedDate: new Date(),
   };
 
-  return XLSX.write(workbook, { type: "array", bookType: "xlsx" }).buffer as ArrayBuffer;
+  const dataArray = XLSX.write(workbook, { type: "array", bookType: "xlsx" });
+  return new Uint8Array(dataArray).buffer as ArrayBuffer;
 }
